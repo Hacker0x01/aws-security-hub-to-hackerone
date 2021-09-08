@@ -1,0 +1,76 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EventBridge Rule for sending Security Hub reports to HackerOne
+
+Parameters:
+  HackerOneApiId:
+    Type: String
+    Description: Enter the ID from HackerOne (not the API Token).
+  HackerOneApiToken:
+    Type: String
+    Description: Enter the API Token from HackerOne.
+
+Resources:
+  HackerOneSecretToken:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: HackerOneSecretToken
+      Description: This secret securely stores the password from the input
+      SecretString: !Ref HackerOneApiToken
+  HackerOneConnection:
+    Type: AWS::Events::Connection
+    Properties: 
+      AuthorizationType: BASIC
+      AuthParameters:
+        BasicAuthParameters: 
+          Password: '{{resolve:secretsmanager:HackerOneSecretToken:SecretString}}'
+          Username: !Ref HackerOneApiId
+      Description: Auth connection for HackerOne API
+      Name: HackerOneConnection
+
+  HackerOneApiDestination:
+    Type: AWS::Events::ApiDestination
+    DependsOn: HackerOneConnection
+    Properties: 
+      ConnectionArn: !GetAtt HackerOneConnection.Arn
+      Description: HackerOne API Destination
+      HttpMethod: POST
+      InvocationEndpoint: https://api.hackerone.com/v1/reports
+      InvocationRateLimitPerSecond: 100
+      Name: HackerOneApiDestination
+  HackerOneRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: A rule to send events to HackerOne
+      EventPattern: 
+        source: 
+          - aws.securityhub
+        detail-type: 
+          - Security Hub Findings - Custom Action
+        resources:
+          - !Sub arn:aws:securityhub:${AWS::Region}:${AWS::AccountId}:action/custom/SendFindingToH1
+      Name: HackerOneRule
+      State: ENABLED
+      Targets:
+        - 
+          Arn: 
+            Fn::GetAtt:
+              - "HackerOneApiDestination"
+              - "Arn"
+          Id: "testId"
+          RetryPolicy:
+            MaximumRetryAttempts: 4
+            MaximumEventAgeInSeconds: 400
+          RoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/apidestinations.events.amazonaws.com/AWSServiceRoleForAmazonEventBridgeApiDestinations
+          InputTransformer:
+            InputPathsMap:
+              "account": "$.detail.findings[0].AwsAccountId"
+              "description": "$.detail.findings[0].Description"
+              "region": "$.detail.findings[0].Resources[0].Region"
+              "remediation": "$.detail.findings[0].Remediation.Recommendation.Text"
+              "remurl": "$.detail.findings[0].Remediation.Recommendation.Url"
+              "severity": "$.detail.findings[0].Severity.Normalized"
+              "time": "$.detail.findings[0].FirstObservedAt"
+              "title": "$.detail.findings[0].Title"
+              "type": "$.detail.findings[0].Types[0]"
+            InputTemplate: "{\n \"data\": {\n \"type\": \"report\",\n \"attributes\": {\n \"team_handle\": \"aws_demo_j5x31\",\n \"title\": \"<title>\",\n \"vulnerability_information\": \"In <region> for Account <account> at <time>, AWS Security Hub detected an issue related to <type>. <description> <remediation> <remurl>\",\n \"impact\": \"<severity>\",\n \"severity_rating\": \"critical\",\n \"source\": \"Security Hub \"\n }\n }\n}"
+        

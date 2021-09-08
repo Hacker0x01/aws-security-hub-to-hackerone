@@ -1,1 +1,1 @@
-# aws-security-hub-to-hackerone
+# security-hub-to-hackerone
